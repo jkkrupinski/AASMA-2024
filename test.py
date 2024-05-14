@@ -217,8 +217,9 @@ dqn = Agent(agent_info)
 episode_rewards = []
 episode_steps = []
 episode_epsilon = []
+num_episodes = 2
 
-for episode in range(0, 10):
+for episode in range(0, num_episodes):
 
     actions = dqn.agent_start()
 
@@ -259,22 +260,22 @@ for m in episode_rewards:
 
         if agent == "agent_2":
             rewards_2.append(m[agent])
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     k = np.mean(rewards_0[i : i + 100])
     k = np.round(k, 3)
     avg_rewards_0.append(k)
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     k = np.mean(rewards_1[i : i + 100])
     k = np.round(k, 3)
     avg_rewards_1.append(k)
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     k = np.mean(rewards_2[i : i + 100])
     k = np.round(k, 3)
     avg_rewards_2.append(k)
 import matplotlib.pyplot as plt
 
 no_episodes = []
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     no_episodes.append(i)
 np.mean(rewards_0) + np.mean(rewards_1) + np.mean(rewards_2)
 
@@ -291,7 +292,7 @@ plt.plot(
 )
 
 
-plt.grid(b=True, which="major", axis="y", linestyle="--")
+#plt.grid(b=True, which="major", axis="y", linestyle="--")
 plt.xlabel("Episode", fontsize=12)
 plt.ylabel("Reward", fontsize=12)
 plt.title("Total Reward per Testing Episode", fontsize=12)
@@ -308,7 +309,7 @@ plt.plot(
     label="Episodes Reward Average1",
 )
 
-plt.grid(b=True, which="major", axis="y", linestyle="--")
+#plt.grid(b=True, which="major", axis="y", linestyle="--")
 plt.xlabel("Episode", fontsize=12)
 plt.ylabel("Reward", fontsize=12)
 plt.title("Total Reward per Testing Episode", fontsize=12)
@@ -325,7 +326,7 @@ plt.plot(
     label="Episodes Reward Average2",
 )
 
-plt.grid(b=True, which="major", axis="y", linestyle="--")
+#plt.grid(b=True, which="major", axis="y", linestyle="--")
 plt.xlabel("Episode", fontsize=12)
 plt.ylabel("Reward", fontsize=12)
 plt.title("Total Reward per Testing Episode", fontsize=12)
@@ -334,12 +335,12 @@ plt.show()
 
 
 total_avg_reward = []
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     k = np.mean(rewards_0[i] + rewards_1[i] + rewards_2[i])
     k = np.round(k, 3)
     total_avg_reward.append(k)
 avg_total = []
-for i in range(0, 1000):
+for i in range(0, num_episodes):
     k = np.mean(total_avg_reward[i : i + 100])
     k = np.round(k, 3)
     avg_total.append(k)
@@ -358,7 +359,7 @@ plt.plot(
     label="Episodes Reward Average FOR 3 AGENTS",
 )
 
-plt.grid(b=True, which="major", axis="y", linestyle="--")
+#plt.grid(b=True, which="major", axis="y", linestyle="--")
 plt.xlabel("Episode", fontsize=12)
 plt.ylabel("Reward", fontsize=12)
 plt.title("AVERAGE_REWARD", fontsize=12)

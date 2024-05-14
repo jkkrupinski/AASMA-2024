@@ -123,7 +123,7 @@ class Agent:
         self.episode_steps = 0
 
     def policy(self, agent, state):
-        action_values = self.models[agent].predict(state)
+        action_values = self.models[agent].predict(state, verbose=0)
         if np.random.uniform() < self.epsilon:
             action = np.random.randint(0, env.action_spaces[agent].n)
         else:
@@ -150,9 +150,11 @@ class Agent:
         return actions
 
     def agent_step(self, states, rewards, terminals):
-        self.sum_rewards = {
-            agent: (self.sum_rewards[agent] + rewards[agent]) for agent in rewards
-        }
+        # self.sum_rewards = {
+        #     agent: (self.sum_rewards[agent] + rewards[agent]) for agent in rewards
+        # }
+        for agent in rewards:
+            self.sum_rewards[agent] += rewards[agent]
 
         self.episode_steps += 1
         for i in states:
@@ -188,17 +190,20 @@ class Agent:
     def agent_train(self, experiences, agent):
 
         states, actions, rewards, terminals, next_states = map(list, zip(*experiences))
+
         states = np.concatenate(states)
         next_states = np.concatenate(next_states)
+
         rewards = np.array(rewards)
         terminals = np.array(terminals)
         batch_size1 = states.shape[0]
-        q_next_mat = self.target_models[agent].predict(next_states)
+
+        q_next_mat = self.target_models[agent].predict(next_states, verbose=0)
 
         v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminals)
 
         target_vec = rewards + self.discount * v_next_vec
-        q_mat = self.models[agent].predict(states)
+        q_mat = self.models[agent].predict(states, verbose=0)
         batch_indices = np.arange(q_mat.shape[0])
         X = states
         q_mat[batch_indices, actions] = target_vec
@@ -213,7 +218,7 @@ episode_rewards = []
 episode_steps = []
 episode_epsilon = []
 
-for episode in range(0, 1000):
+for episode in range(0, 10):
 
     actions = dqn.agent_start()
 
@@ -222,7 +227,7 @@ for episode in range(0, 1000):
         next_states, rewards, dones, infos, _ = env.step(actions)
         terminals = {agent: 1 if dones[agent] == True else 0 for agent in dones}
         actions = dqn.agent_step(next_states, rewards, terminals)
-        
+
         if dqn.epsilon > MIN_EPSILON:
 
             dqn.epsilon *= EPSILON_DECAY

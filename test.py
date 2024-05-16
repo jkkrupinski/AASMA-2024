@@ -123,6 +123,7 @@ class Agent:
         self.episode_steps = 0
 
     def policy(self, agent, state):
+        print(state.shape)
         action_values = self.models[agent].predict(state, verbose=0)
         if np.random.uniform() < self.epsilon:
             action = np.random.randint(0, env.action_spaces[agent].n)
@@ -198,11 +199,14 @@ class Agent:
         terminals = np.array(terminals)
         batch_size1 = states.shape[0]
 
+        print(next_states.shape)
         q_next_mat = self.target_models[agent].predict(next_states, verbose=0)
 
         v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminals)
 
         target_vec = rewards + self.discount * v_next_vec
+
+        print(states.shape)
         q_mat = self.models[agent].predict(states, verbose=0)
         batch_indices = np.arange(q_mat.shape[0])
         X = states

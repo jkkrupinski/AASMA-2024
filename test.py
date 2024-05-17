@@ -1,15 +1,14 @@
 from pettingzoo.mpe import simple_spread_v3
 import numpy as np
 import tensorflow as tf
+import time
+
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras.models import Model
-
-
-env = simple_spread_v3.parallel_env()
 
 
 class ActionValueNetwork:
@@ -23,14 +22,11 @@ class ActionValueNetwork:
         x = Dense(256, activation="relu")(i)
         x = Dense(128, activation="relu")(x)
         x = Dense(self.num_actions, activation="linear")(x)
+
         model = Model(i, x)
         model.compile(optimizer=Adam(learning_rate=self.step_size), loss="mse")
+
         return model
-
-
-epsilon = 1
-EPSILON_DECAY = 0.998
-MIN_EPSILON = 0.01
 
 
 class ReplayBuffer:
@@ -41,11 +37,11 @@ class ReplayBuffer:
         self.rand_generator = np.random.RandomState(seed)
         self.max_size = size
 
-    def append(self, state, action, reward, terminal, next_state):
+    def append(self, state, action, reward, termination, next_state):
 
         if len(self.buffer) == self.max_size:
             del self.buffer[0]
-        self.buffer.append([state, action, reward, terminal, next_state])
+        self.buffer.append([state, action, reward, termination, next_state])
 
     def sample(self):
 
@@ -58,40 +54,47 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-agent_info = {
-    "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
-    "replay_buffer_size": 256,
-    "minibatch_sz": 32,
-    "num_replay_updates_per_step": 2,
-    "gamma": 0.99,
-    "seed": 0,
-}
-
-
-class Agent:
+class DQN:
     def __init__(self, agent_config):
-        replay_buffer0 = ReplayBuffer(
-            agent_config["replay_buffer_size"],
-            agent_config["minibatch_sz"],
-            agent_config.get("seed"),
+
+        self.init_buffers(agent_config)
+
+        self.init_networks(agent_config)
+
+        self.init_hyperparameters(agent_config)
+
+        self.init_environment(agent_config)
+
+        self.rand_generator = np.random.RandomState(agent_config.get("seed"))
+
+    def init_buffers(self, agent_config):
+        buffer_size = agent_config["replay_buffer_size"]
+        self.minibatch_size = agent_config["minibatch_sz"]
+        seed = agent_config.get("seed")
+
+        replay_buffer_0 = ReplayBuffer(
+            buffer_size,
+            self.minibatch_size,
+            seed,
         )
-        replay_buffer1 = ReplayBuffer(
-            agent_config["replay_buffer_size"],
-            agent_config["minibatch_sz"],
-            agent_config.get("seed"),
+        replay_buffer_1 = ReplayBuffer(
+            buffer_size,
+            self.minibatch_size,
+            seed,
         )
-        replay_buffer2 = ReplayBuffer(
-            agent_config["replay_buffer_size"],
-            agent_config["minibatch_sz"],
-            agent_config.get("seed"),
+        replay_buffer_2 = ReplayBuffer(
+            buffer_size,
+            self.minibatch_size,
+            seed,
         )
 
         self.replay_buffer = {
-            "agent_0": replay_buffer0,
-            "agent_1": replay_buffer1,
-            "agent_2": replay_buffer2,
+            "agent_0": replay_buffer_0,
+            "agent_1": replay_buffer_1,
+            "agent_2": replay_buffer_2,
         }
 
+    def init_networks(self, agent_config):
         self.network = ActionValueNetwork(agent_config["network_config"])
 
         model_0 = self.network.create_model()
@@ -110,73 +113,74 @@ class Agent:
             "agent_2": target_model_2,
         }
 
-        self.num_actions = agent_config["network_config"]["num_actions"]
-
+    def init_hyperparameters(self, agent_config):
         self.num_replay = agent_config["num_replay_updates_per_step"]
         self.discount = agent_config["gamma"]
+        self.epsilon = agent_config["epsilon"]
+        self.epsilon_decay = agent_config["epsilon_dacay"]
+        self.min_epsilon = agent_config["min_epsilon"]
 
-        self.rand_generator = np.random.RandomState(agent_config.get("seed"))
+    def init_environment(self, agent_config):
+        self.num_actions = agent_config["network_config"]["num_actions"]
         self.last_states = None
         self.actions = None
-        self.epsilon = epsilon
         self.sum_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
         self.episode_steps = 0
 
     def policy(self, agent, state):
-        print(state.shape)
-        action_values = self.models[agent].predict(state, verbose=0)
         if np.random.uniform() < self.epsilon:
             action = np.random.randint(0, env.action_spaces[agent].n)
         else:
+            action_values = self.models[agent].predict(state, verbose=0)
             action = np.argmax(action_values)
+
         return int(action)
 
     def agent_start(self):
         self.sum_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
         self.episode_steps = 0
 
-        double_dict = (
-            env.reset()
-        )  # it returns a tuple of 2 dict second one empty (why?)
+        double_dict = env.reset()  # it returns a tuple of 2 dict second one empty
         self.last_states = double_dict[0]
 
         for agent in env.agents:
-            self.last_states[agent] = np.array([self.last_states[agent]])
+            self.last_states[agent] = tf.expand_dims(
+                self.last_states[agent], 0
+            )  # expand dims
 
         self.actions = {
             agent: self.policy(agent, self.last_states[agent]) for agent in env.agents
         }
-        actions = self.actions
 
-        return actions
+        return self.actions
 
-    def agent_step(self, states, rewards, terminals):
-        # self.sum_rewards = {
-        #     agent: (self.sum_rewards[agent] + rewards[agent]) for agent in rewards
-        # }
-        for agent in rewards:
-            self.sum_rewards[agent] += rewards[agent]
+    def agent_step(self, states, rewards, terminations):
 
         self.episode_steps += 1
-        for i in states:
-            states[i] = np.array([states[i]])
 
-        for agent in states:
+        for agent in env.agents:
+
+            self.sum_rewards[agent] += rewards[agent]  # collect rewards
+
+            states[agent] = np.array([states[agent]])  # expand dims
+
             state = states[agent]
             last_state = self.last_states[agent]
             action = self.actions[agent]
             reward = rewards[agent]
-            terminal = terminals[agent]
+            termination = terminations[agent]  # add to buffer
+
             self.replay_buffer[agent].append(
-                last_state, action, reward, terminal, state
+                last_state, action, reward, termination, state
             )
 
-        for agent in self.replay_buffer:
             if (
-                self.replay_buffer[agent].size()
-                > self.replay_buffer[agent].minibatch_size
-            ):
+                self.replay_buffer[agent].size() > self.minibatch_size
+            ):  # check if should train
+
+                # Copy policy network to target network after a certain number of steps
                 self.target_models[agent].set_weights(self.models[agent].get_weights())
+
                 for _ in range(self.num_replay):
                     experiences = self.replay_buffer[agent].sample()
                     self.agent_train(experiences, agent)
@@ -185,28 +189,34 @@ class Agent:
         self.actions = {
             agent: self.policy(agent, self.last_states[agent]) for agent in env.agents
         }
-        actions = self.actions
-        return actions
+
+        return self.actions
 
     def agent_train(self, experiences, agent):
 
-        states, actions, rewards, terminals, next_states = map(list, zip(*experiences))
+        states, actions, rewards, terminations, next_states = map(
+            list, zip(*experiences)
+        )
 
         states = np.concatenate(states)
         next_states = np.concatenate(next_states)
 
         rewards = np.array(rewards)
-        terminals = np.array(terminals)
+        terminations = np.array(terminations)
         batch_size1 = states.shape[0]
 
-        print(next_states.shape)
-        q_next_mat = self.target_models[agent].predict(next_states, verbose=0)
+        n = next_states.shape[0]
 
-        v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminals)
+        q_next_mat = np.zeros((32, 5))
+        for i in range(n):
+            q_next_mat[i] = self.target_models[agent].predict(
+                tf.expand_dims(next_states[i], 0), verbose=0
+            )
+
+        v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminations)
 
         target_vec = rewards + self.discount * v_next_vec
 
-        print(states.shape)
         q_mat = self.models[agent].predict(states, verbose=0)
         batch_indices = np.arange(q_mat.shape[0])
         X = states
@@ -216,161 +226,190 @@ class Agent:
         )
 
 
-dqn = Agent(agent_info)
+env = simple_spread_v3.parallel_env()
 
-episode_rewards = []
-episode_steps = []
-episode_epsilon = []
-num_episodes = 2
 
-for episode in range(0, num_episodes):
+def main():
 
-    actions = dqn.agent_start()
+    episode_rewards = []
+    episode_steps = []
+    episode_epsilon = []
 
-    for step in range(100):
+    NUM_EPISODES = 5
+    NUM_STEPS = 25
 
-        next_states, rewards, dones, infos, _ = env.step(actions)
-        terminals = {agent: 1 if dones[agent] == True else 0 for agent in dones}
-        actions = dqn.agent_step(next_states, rewards, terminals)
+    agent_config = {
+        "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
+        "replay_buffer_size": 256,
+        "minibatch_sz": 32,
+        "num_replay_updates_per_step": 2,
+        "gamma": 0.99,
+        "seed": 0,
+        "epsilon": 1,
+        "epsilon_dacay": 0.998,
+        "min_epsilon": 0.01,
+    }
 
-        if dqn.epsilon > MIN_EPSILON:
+    dqn = DQN(agent_config)
 
-            dqn.epsilon *= EPSILON_DECAY
-            dqn.epsilon = max(MIN_EPSILON, dqn.epsilon)
-    print(
-        "EPISODE", episode, " Epsilon = ", dqn.epsilon, " STEPS = ", dqn.episode_steps
+    for episode in range(NUM_EPISODES):
+        start = time.time()
+
+        actions = dqn.agent_start()
+
+        for step in range(NUM_STEPS):
+
+            next_states, rewards, dones, infos, _ = env.step(actions)
+            terminations = {agent: 1 if dones[agent] == True else 0 for agent in dones}
+            actions = dqn.agent_step(next_states, rewards, terminations)
+
+            if dqn.epsilon > dqn.min_epsilon:
+
+                dqn.epsilon *= dqn.epsilon_decay
+                dqn.epsilon = max(dqn.min_epsilon, dqn.epsilon)
+
+        end = time.time()
+
+        print(
+            "EPISODE",
+            episode,
+            " Epsilon = ",
+            round(dqn.epsilon, 2),
+            " STEPS = ",
+            dqn.episode_steps,
+            "TIME = ",
+            round(end - start, 2),
+            "s",
+        )
+        print("REWARD", dqn.sum_rewards)
+
+        episode_rewards.append(dqn.sum_rewards)
+        episode_steps.append(dqn.episode_steps)
+        episode_epsilon.append(dqn.epsilon)
+
+    dqn.models["agent_0"].save("models/S0.keras")
+    dqn.models["agent_1"].save("models/S1.keras")
+    dqn.models["agent_2"].save("models/S2.keras")
+
+    avg_rewards_0 = []
+    avg_rewards_1 = []
+    avg_rewards_2 = []
+    rewards_0 = []
+    rewards_1 = []
+    rewards_2 = []
+
+    for m in episode_rewards:
+        for agent in m:
+            if agent == "agent_0":
+                rewards_0.append(m[agent])
+
+            if agent == "agent_1":
+                rewards_1.append(m[agent])
+
+            if agent == "agent_2":
+                rewards_2.append(m[agent])
+    for i in range(0, NUM_EPISODES):
+        k = np.mean(rewards_0[i : i + 100])
+        k = np.round(k, 3)
+        avg_rewards_0.append(k)
+    for i in range(0, NUM_EPISODES):
+        k = np.mean(rewards_1[i : i + 100])
+        k = np.round(k, 3)
+        avg_rewards_1.append(k)
+    for i in range(0, NUM_EPISODES):
+        k = np.mean(rewards_2[i : i + 100])
+        k = np.round(k, 3)
+        avg_rewards_2.append(k)
+    import matplotlib.pyplot as plt
+
+    no_episodes = []
+    for i in range(0, NUM_EPISODES):
+        no_episodes.append(i)
+    np.mean(rewards_0) + np.mean(rewards_1) + np.mean(rewards_2)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(no_episodes, rewards_0, color="red", linestyle="-", label="Total Reward0")
+
+    plt.plot(
+        no_episodes,
+        avg_rewards_0,
+        color="midnightblue",
+        linestyle="--",
+        label="Episodes Reward Average0",
     )
-    print("REWARD", dqn.sum_rewards)
 
-    episode_rewards.append(dqn.sum_rewards)
-    episode_steps.append(dqn.episode_steps)
-    episode_epsilon.append(dqn.epsilon)
+    # plt.grid(b=True, which="major", axis="y", linestyle="--")
+    plt.xlabel("Episode", fontsize=12)
+    plt.ylabel("Reward", fontsize=12)
+    plt.title("Total Reward per Testing Episode", fontsize=12)
+    plt.legend(loc="lower right", fontsize=12)
+    plt.show()
 
+    plt.plot(no_episodes, rewards_1, color="blue", linestyle="-", label="Total Reward1")
+    plt.plot(
+        no_episodes,
+        avg_rewards_1,
+        color="black",
+        linestyle="--",
+        label="Episodes Reward Average1",
+    )
 
-avg_rewards_0 = []
-avg_rewards_1 = []
-avg_rewards_2 = []
-rewards_0 = []
-rewards_1 = []
-rewards_2 = []
+    # plt.grid(b=True, which="major", axis="y", linestyle="--")
+    plt.xlabel("Episode", fontsize=12)
+    plt.ylabel("Reward", fontsize=12)
+    plt.title("Total Reward per Testing Episode", fontsize=12)
+    plt.legend(loc="lower right", fontsize=12)
+    plt.show()
 
-for m in episode_rewards:
-    for agent in m:
-        if agent == "agent_0":
-            rewards_0.append(m[agent])
+    plt.plot(
+        no_episodes, rewards_2, color="green", linestyle="-", label="Total Reward2"
+    )
+    plt.plot(
+        no_episodes,
+        avg_rewards_2,
+        color="pink",
+        linestyle="--",
+        label="Episodes Reward Average2",
+    )
 
-        if agent == "agent_1":
-            rewards_1.append(m[agent])
+    # plt.grid(b=True, which="major", axis="y", linestyle="--")
+    plt.xlabel("Episode", fontsize=12)
+    plt.ylabel("Reward", fontsize=12)
+    plt.title("Total Reward per Testing Episode", fontsize=12)
+    plt.legend(loc="lower right", fontsize=12)
+    plt.show()
 
-        if agent == "agent_2":
-            rewards_2.append(m[agent])
-for i in range(0, num_episodes):
-    k = np.mean(rewards_0[i : i + 100])
-    k = np.round(k, 3)
-    avg_rewards_0.append(k)
-for i in range(0, num_episodes):
-    k = np.mean(rewards_1[i : i + 100])
-    k = np.round(k, 3)
-    avg_rewards_1.append(k)
-for i in range(0, num_episodes):
-    k = np.mean(rewards_2[i : i + 100])
-    k = np.round(k, 3)
-    avg_rewards_2.append(k)
-import matplotlib.pyplot as plt
+    total_avg_reward = []
+    for i in range(0, NUM_EPISODES):
+        k = np.mean(rewards_0[i] + rewards_1[i] + rewards_2[i])
+        k = np.round(k, 3)
+        total_avg_reward.append(k)
+    avg_total = []
+    for i in range(0, NUM_EPISODES):
+        k = np.mean(total_avg_reward[i : i + 100])
+        k = np.round(k, 3)
+        avg_total.append(k)
+    plt.plot(
+        no_episodes,
+        total_avg_reward,
+        color="blue",
+        linestyle="-",
+        label="MEAN REWARD OF 3AGENTS",
+    )
+    plt.plot(
+        no_episodes,
+        avg_total,
+        color="white",
+        linestyle="--",
+        label="Episodes Reward Average FOR 3 AGENTS",
+    )
 
-no_episodes = []
-for i in range(0, num_episodes):
-    no_episodes.append(i)
-np.mean(rewards_0) + np.mean(rewards_1) + np.mean(rewards_2)
-
-
-plt.figure(figsize=(10, 5))
-plt.plot(no_episodes, rewards_0, color="red", linestyle="-", label="Total Reward0")
-
-plt.plot(
-    no_episodes,
-    avg_rewards_0,
-    color="midnightblue",
-    linestyle="--",
-    label="Episodes Reward Average0",
-)
-
-
-#plt.grid(b=True, which="major", axis="y", linestyle="--")
-plt.xlabel("Episode", fontsize=12)
-plt.ylabel("Reward", fontsize=12)
-plt.title("Total Reward per Testing Episode", fontsize=12)
-plt.legend(loc="lower right", fontsize=12)
-plt.show()
-
-
-plt.plot(no_episodes, rewards_1, color="blue", linestyle="-", label="Total Reward1")
-plt.plot(
-    no_episodes,
-    avg_rewards_1,
-    color="black",
-    linestyle="--",
-    label="Episodes Reward Average1",
-)
-
-#plt.grid(b=True, which="major", axis="y", linestyle="--")
-plt.xlabel("Episode", fontsize=12)
-plt.ylabel("Reward", fontsize=12)
-plt.title("Total Reward per Testing Episode", fontsize=12)
-plt.legend(loc="lower right", fontsize=12)
-plt.show()
+    # plt.grid(b=True, which="major", axis="y", linestyle="--")
+    plt.xlabel("Episode", fontsize=12)
+    plt.ylabel("Reward", fontsize=12)
+    plt.title("AVERAGE_REWARD", fontsize=12)
+    plt.legend(loc="lower right", fontsize=12)
+    plt.show()
 
 
-plt.plot(no_episodes, rewards_2, color="green", linestyle="-", label="Total Reward2")
-plt.plot(
-    no_episodes,
-    avg_rewards_2,
-    color="pink",
-    linestyle="--",
-    label="Episodes Reward Average2",
-)
-
-#plt.grid(b=True, which="major", axis="y", linestyle="--")
-plt.xlabel("Episode", fontsize=12)
-plt.ylabel("Reward", fontsize=12)
-plt.title("Total Reward per Testing Episode", fontsize=12)
-plt.legend(loc="lower right", fontsize=12)
-plt.show()
-
-
-total_avg_reward = []
-for i in range(0, num_episodes):
-    k = np.mean(rewards_0[i] + rewards_1[i] + rewards_2[i])
-    k = np.round(k, 3)
-    total_avg_reward.append(k)
-avg_total = []
-for i in range(0, num_episodes):
-    k = np.mean(total_avg_reward[i : i + 100])
-    k = np.round(k, 3)
-    avg_total.append(k)
-plt.plot(
-    no_episodes,
-    total_avg_reward,
-    color="blue",
-    linestyle="-",
-    label="MEAN REWARD OF 3AGENTS",
-)
-plt.plot(
-    no_episodes,
-    avg_total,
-    color="white",
-    linestyle="--",
-    label="Episodes Reward Average FOR 3 AGENTS",
-)
-
-#plt.grid(b=True, which="major", axis="y", linestyle="--")
-plt.xlabel("Episode", fontsize=12)
-plt.ylabel("Reward", fontsize=12)
-plt.title("AVERAGE_REWARD", fontsize=12)
-plt.legend(loc="lower right", fontsize=12)
-plt.show()
-
-
-dqn.models["agent_0"].save("S0.h5")
-dqn.models["agent_1"].save("S1.h5")
-dqn.models["agent_2"].save("S2.h5")
+main()

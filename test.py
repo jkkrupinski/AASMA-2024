@@ -2,6 +2,7 @@ from pettingzoo.mpe import simple_spread_v3
 import numpy as np
 import tensorflow as tf
 import time
+import sys
 
 
 from tensorflow.keras.models import Sequential
@@ -205,12 +206,12 @@ class DQN:
         terminations = np.array(terminations)
         batch_size1 = states.shape[0]
 
-        n = next_states.shape[0]
+        num_states = next_states.shape[0]
 
         q_next_mat = np.zeros((32, 5))
-        for i in range(n):
-            q_next_mat[i] = self.target_models[agent].predict(
-                tf.expand_dims(next_states[i], 0), verbose=0
+        for state in range(num_states):
+            q_next_mat[state] = self.target_models[agent].predict(
+                tf.expand_dims(next_states[state], 0), verbose=0
             )
 
         v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminations)
@@ -219,10 +220,9 @@ class DQN:
 
         q_mat = self.models[agent].predict(states, verbose=0)
         batch_indices = np.arange(q_mat.shape[0])
-        X = states
         q_mat[batch_indices, actions] = target_vec
         self.models[agent].fit(
-            X, q_mat, batch_size=batch_size1, verbose=0, shuffle=False
+            states, q_mat, batch_size=batch_size1, verbose=0, shuffle=False
         )
 
 
@@ -235,7 +235,7 @@ def main():
     episode_steps = []
     episode_epsilon = []
 
-    NUM_EPISODES = 5
+    NUM_EPISODES = 20
     NUM_STEPS = 25
 
     agent_config = {
@@ -259,8 +259,10 @@ def main():
 
         for step in range(NUM_STEPS):
 
-            next_states, rewards, dones, infos, _ = env.step(actions)
-            terminations = {agent: 1 if dones[agent] == True else 0 for agent in dones}
+            next_states, rewards, terminations, infos, _ = env.step(actions)
+            terminations = {
+                agent: 1 if terminations[agent] == True else 0 for agent in terminations
+            }
             actions = dqn.agent_step(next_states, rewards, terminations)
 
             if dqn.epsilon > dqn.min_epsilon:
@@ -268,8 +270,12 @@ def main():
                 dqn.epsilon *= dqn.epsilon_decay
                 dqn.epsilon = max(dqn.min_epsilon, dqn.epsilon)
 
+            sys.stdout.write("\r{0}>".format("=" * step))
+            sys.stdout.flush()
+
         end = time.time()
 
+        print()
         print(
             "EPISODE",
             episode,
@@ -282,6 +288,7 @@ def main():
             "s",
         )
         print("REWARD", dqn.sum_rewards)
+        print()
 
         episode_rewards.append(dqn.sum_rewards)
         episode_steps.append(dqn.episode_steps)
@@ -308,6 +315,7 @@ def main():
 
             if agent == "agent_2":
                 rewards_2.append(m[agent])
+
     for i in range(0, NUM_EPISODES):
         k = np.mean(rewards_0[i : i + 100])
         k = np.round(k, 3)
@@ -320,6 +328,7 @@ def main():
         k = np.mean(rewards_2[i : i + 100])
         k = np.round(k, 3)
         avg_rewards_2.append(k)
+
     import matplotlib.pyplot as plt
 
     no_episodes = []
@@ -411,5 +420,8 @@ def main():
     plt.legend(loc="lower right", fontsize=12)
     plt.show()
 
+
+# import cProfile
+# cProfile.run("main()")
 
 main()

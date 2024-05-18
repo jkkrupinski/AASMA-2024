@@ -4,6 +4,7 @@ import tensorflow as tf
 import time
 import sys
 
+import matplotlib.pyplot as plt
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
@@ -32,20 +33,17 @@ class ActionValueNetwork:
 
 class ReplayBuffer:
     def __init__(self, size, minibatch_size, seed):
-
         self.buffer = []
         self.minibatch_size = minibatch_size
         self.rand_generator = np.random.RandomState(seed)
         self.max_size = size
 
     def append(self, state, action, reward, termination, next_state):
-
         if len(self.buffer) == self.max_size:
             del self.buffer[0]
         self.buffer.append([state, action, reward, termination, next_state])
 
     def sample(self):
-
         idxs = self.rand_generator.choice(
             np.arange(len(self.buffer)), size=self.minibatch_size
         )
@@ -118,7 +116,7 @@ class DQN:
         self.num_replay = agent_config["num_replay_updates_per_step"]
         self.discount = agent_config["gamma"]
         self.epsilon = agent_config["epsilon"]
-        self.epsilon_decay = agent_config["epsilon_dacay"]
+        self.epsilon_decay = agent_config["epsilon_decay"]
         self.min_epsilon = agent_config["min_epsilon"]
 
     def init_environment(self, agent_config):
@@ -127,6 +125,11 @@ class DQN:
         self.actions = None
         self.sum_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
         self.episode_steps = 0
+
+    def save_models(self, name):
+        self.models["agent_0"].save("models/" + name + "0.keras")
+        self.models["agent_1"].save("models/" + name + "1.keras")
+        self.models["agent_2"].save("models/" + name + "2.keras")
 
     def policy(self, agent, state):
         if np.random.uniform() < self.epsilon:
@@ -222,78 +225,7 @@ class DQN:
         )
 
 
-env = simple_spread_v3.parallel_env()
-
-
-def main():
-
-    episode_rewards = []
-    episode_steps = []
-    episode_epsilon = []
-
-    NUM_EPISODES = 1000
-    NUM_STEPS = 25
-
-    agent_config = {
-        "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
-        "replay_buffer_size": 256,
-        "minibatch_sz": 32,
-        "num_replay_updates_per_step": 1,
-        "gamma": 0.99,
-        "seed": 0,
-        "epsilon": 1,
-        "epsilon_dacay": 0.998,
-        "min_epsilon": 0.01,
-    }
-
-    dqn = DQN(agent_config)
-
-    for episode in range(NUM_EPISODES):
-        start = time.time()
-
-        actions = dqn.agent_start()
-
-        for step in range(NUM_STEPS):
-
-            next_states, rewards, terminations, infos, _ = env.step(actions)
-            terminations = {
-                agent: 1 if terminations[agent] == True else 0 for agent in terminations
-            }
-            actions = dqn.agent_step(next_states, rewards, terminations)
-
-            if dqn.epsilon > dqn.min_epsilon:
-
-                dqn.epsilon *= dqn.epsilon_decay
-                dqn.epsilon = max(dqn.min_epsilon, dqn.epsilon)
-
-            sys.stdout.write("\r{0}>".format("=" * step))
-            sys.stdout.flush()
-
-        end = time.time()
-
-        print()
-        print(
-            "EPISODE",
-            episode,
-            " Epsilon = ",
-            round(dqn.epsilon, 2),
-            " STEPS = ",
-            dqn.episode_steps,
-            "TIME = ",
-            round(end - start, 2),
-            "s",
-        )
-        print("REWARD", dqn.sum_rewards)
-        print()
-
-        episode_rewards.append(dqn.sum_rewards)
-        episode_steps.append(dqn.episode_steps)
-        episode_epsilon.append(dqn.epsilon)
-
-    dqn.models["agent_0"].save("models/S0.keras")
-    dqn.models["agent_1"].save("models/S1.keras")
-    dqn.models["agent_2"].save("models/S2.keras")
-
+def plot_results(episode_rewards, NUM_EPISODES):
     avg_rewards_0 = []
     avg_rewards_1 = []
     avg_rewards_2 = []
@@ -324,8 +256,6 @@ def main():
         k = np.mean(rewards_2[i : i + 100])
         k = np.round(k, 3)
         avg_rewards_2.append(k)
-
-    import matplotlib.pyplot as plt
 
     no_episodes = []
     for i in range(0, NUM_EPISODES):
@@ -415,6 +345,78 @@ def main():
     plt.title("AVERAGE_REWARD", fontsize=12)
     plt.legend(loc="lower right", fontsize=12)
     plt.show()
+
+
+env = simple_spread_v3.parallel_env()
+
+
+def main():
+
+    episode_rewards = []
+    # episode_steps = []
+    # episode_epsilon = []
+
+    NUM_EPISODES = 1000
+    NUM_STEPS = 25
+
+    agent_config = {
+        "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
+        "replay_buffer_size": 256,
+        "minibatch_sz": 32,
+        "num_replay_updates_per_step": 1,
+        "gamma": 0.99,
+        "seed": 0,
+        "epsilon": 1,
+        "epsilon_decay": 0.998,
+        "min_epsilon": 0.01,
+    }
+
+    dqn = DQN(agent_config)
+
+    for episode in range(NUM_EPISODES):
+        start = time.time()
+
+        actions = dqn.agent_start()
+
+        for step in range(NUM_STEPS):
+            next_states, rewards, terminations, infos, _ = env.step(actions)
+            terminations = {
+                agent: 1 if terminations[agent] == True else 0 for agent in terminations
+            }
+            actions = dqn.agent_step(next_states, rewards, terminations)
+
+            sys.stdout.write("\r{0}>".format("=" * step))
+            sys.stdout.flush()
+
+        if dqn.epsilon > dqn.min_epsilon:
+            dqn.epsilon = max(dqn.epsilon - 1 / NUM_EPISODES, dqn.min_epsilon)
+
+
+        end = time.time()
+
+        print()
+        print(
+            "EPISODE",
+            episode,
+            " Epsilon = ",
+            round(dqn.epsilon, 2),
+            " STEPS = ",
+            dqn.episode_steps,
+            "TIME = ",
+            round(end - start, 2),
+            "s",
+        )
+        print("REWARD", dqn.sum_rewards)
+        print()
+
+        episode_rewards.append(dqn.sum_rewards)
+        # episode_steps.append(dqn.episode_steps)
+        # episode_epsilon.append(dqn.epsilon)
+
+    model_name = "model"
+    dqn.save_models(model_name)
+
+    plot_results(episode_rewards, NUM_EPISODES)
 
 
 # import cProfile

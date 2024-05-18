@@ -132,6 +132,7 @@ class DQN:
         if np.random.uniform() < self.epsilon:
             action = np.random.randint(0, env.action_spaces[agent].n)
         else:
+            state = tf.convert_to_tensor(state)
             action_values = self.models[agent].predict(state, verbose=0)
             action = np.argmax(action_values)
 
@@ -206,21 +207,16 @@ class DQN:
         terminations = np.array(terminations)
         batch_size1 = states.shape[0]
 
-        num_states = next_states.shape[0]
-
-        q_next_mat = np.zeros((32, 5))
-        for state in range(num_states):
-            q_next_mat[state] = self.target_models[agent].predict(
-                tf.expand_dims(next_states[state], 0), verbose=0
-            )
+        q_next_mat = self.target_models[agent].predict_on_batch(next_states)
 
         v_next_vec = np.max(q_next_mat, axis=1) * (1 - terminations)
-
         target_vec = rewards + self.discount * v_next_vec
 
-        q_mat = self.models[agent].predict(states, verbose=0)
+        q_mat = self.models[agent].predict_on_batch(states)
+
         batch_indices = np.arange(q_mat.shape[0])
         q_mat[batch_indices, actions] = target_vec
+
         self.models[agent].fit(
             states, q_mat, batch_size=batch_size1, verbose=0, shuffle=False
         )
@@ -235,14 +231,14 @@ def main():
     episode_steps = []
     episode_epsilon = []
 
-    NUM_EPISODES = 20
+    NUM_EPISODES = 1000
     NUM_STEPS = 25
 
     agent_config = {
         "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
         "replay_buffer_size": 256,
         "minibatch_sz": 32,
-        "num_replay_updates_per_step": 2,
+        "num_replay_updates_per_step": 1,
         "gamma": 0.99,
         "seed": 0,
         "epsilon": 1,

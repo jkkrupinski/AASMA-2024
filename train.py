@@ -2,7 +2,6 @@ from pettingzoo.mpe import simple_spread_v3
 import numpy as np
 import tensorflow as tf
 import time
-import sys
 
 import matplotlib.pyplot as plt
 
@@ -11,6 +10,7 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Dense
 from tensorflow.keras.models import Model
+
 
 
 class ActionValueNetwork:
@@ -57,11 +57,8 @@ class DQN:
     def __init__(self, agent_config):
 
         self.init_buffers(agent_config)
-
         self.init_networks(agent_config)
-
         self.init_hyperparameters(agent_config)
-
         self.init_environment(agent_config)
 
         self.rand_generator = np.random.RandomState(agent_config.get("seed"))
@@ -145,13 +142,13 @@ class DQN:
         self.sum_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
         self.episode_steps = 0
 
-        double_dict = env.reset()  # it returns a tuple of 2 dict second one empty
+        double_dict = env.reset(seed=42)  # it returns a tuple of 2 dict second one empty
         self.last_states = double_dict[0]
 
         for agent in env.agents:
             self.last_states[agent] = tf.expand_dims(
                 self.last_states[agent], 0
-            )  # expand dims
+            ) 
 
         self.actions = {
             agent: self.policy(agent, self.last_states[agent]) for agent in env.agents
@@ -165,15 +162,15 @@ class DQN:
 
         for agent in env.agents:
 
-            self.sum_rewards[agent] += rewards[agent]  # collect rewards
-
-            states[agent] = np.array([states[agent]])  # expand dims
+            self.sum_rewards[agent] += rewards[agent] / 25.0  
+            
+            states[agent] = np.array([states[agent]])
 
             state = states[agent]
             last_state = self.last_states[agent]
             action = self.actions[agent]
             reward = rewards[agent]
-            termination = terminations[agent]  # add to buffer
+            termination = terminations[agent]
 
             self.replay_buffer[agent].append(
                 last_state, action, reward, termination, state
@@ -221,7 +218,7 @@ class DQN:
         q_mat[batch_indices, actions] = target_vec
 
         self.models[agent].fit(
-            states, q_mat, batch_size=batch_size1, verbose=0, shuffle=False
+            states, q_mat, batch_size=batch_size1, verbose=0, shuffle=True
         )
 
 
@@ -347,21 +344,20 @@ def plot_results(episode_rewards, NUM_EPISODES):
     plt.show()
 
 
-env = simple_spread_v3.parallel_env()
+env = simple_spread_v3.parallel_env(local_ratio=0.5)
 
 
 def main():
 
     episode_rewards = []
-    # episode_steps = []
-    # episode_epsilon = []
 
-    NUM_EPISODES = 1000
+    NUM_EPISODES = 1_000
     NUM_STEPS = 25
+    SAVE_MODEL_EVERY = 100
 
     agent_config = {
         "network_config": {"state_dim": (18,), "num_actions": 5, "step_size": 1e-3},
-        "replay_buffer_size": 256,
+        "replay_buffer_size": 1000,
         "minibatch_sz": 32,
         "num_replay_updates_per_step": 1,
         "gamma": 0.99,
@@ -379,18 +375,18 @@ def main():
         actions = dqn.agent_start()
 
         for step in range(NUM_STEPS):
-            next_states, rewards, terminations, infos, _ = env.step(actions)
+            states, rewards, terminations, _, _ = env.step(actions)
             terminations = {
                 agent: 1 if terminations[agent] == True else 0 for agent in terminations
             }
-            actions = dqn.agent_step(next_states, rewards, terminations)
-
-            sys.stdout.write("\r{0}>".format("=" * step))
-            sys.stdout.flush()
+            actions = dqn.agent_step(states, rewards, terminations)
 
         if dqn.epsilon > dqn.min_epsilon:
             dqn.epsilon = max(dqn.epsilon - 1 / NUM_EPISODES, dqn.min_epsilon)
 
+        if episode % SAVE_MODEL_EVERY == 0 and episode != 0:
+            name = "model-" + episode.__str__() + "-"
+            dqn.save_models(name)
 
         end = time.time()
 
@@ -400,20 +396,23 @@ def main():
             episode,
             " Epsilon = ",
             round(dqn.epsilon, 2),
-            " STEPS = ",
-            dqn.episode_steps,
             "TIME = ",
             round(end - start, 2),
             "s",
         )
-        print("REWARD", dqn.sum_rewards)
+        print(
+            "AVG REWARDS: agent_0:",
+            round(dqn.sum_rewards["agent_0"], 2),
+            ", agent_1:",
+            round(dqn.sum_rewards["agent_1"], 2),
+            ", agent_2:",
+            round(dqn.sum_rewards["agent_2"], 2),
+        )
         print()
 
         episode_rewards.append(dqn.sum_rewards)
-        # episode_steps.append(dqn.episode_steps)
-        # episode_epsilon.append(dqn.epsilon)
 
-    model_name = "model"
+    model_name = "model-fin-"
     dqn.save_models(model_name)
 
     plot_results(episode_rewards, NUM_EPISODES)

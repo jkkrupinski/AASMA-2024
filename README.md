@@ -25,5 +25,5 @@ Repository contains pre-trained models to see possible results named `agent_X.pt
 
 
 ## Requirements 
-- Pettingzoo environment -  `pip install 'pettingzoo[mpe]`
-- PyTorch - `pip install torch`
+- Pettingzoo environment -  `pip install 'pettingzoo[mpe]' == 1.24.3` 
+- PyTorch - `pip install torch == 2.2.2`

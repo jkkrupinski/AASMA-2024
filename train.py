@@ -1,15 +1,12 @@
-import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import deque
 import random
+import time
 import torch
 from torch import nn
 import torch.nn.functional as F
-import time
-
 import torch.nn as nn
-import torch.optim as optim
 
 from pettingzoo.mpe import simple_spread_v3
 
@@ -79,11 +76,16 @@ class SimpleSpreadDQL:
     ACTIONS = ["N", "L", "R", "D", "U"]
 
     # Train the SimpleSpread environment
-    def train(self, episodes, render=False):
+    def train(self, episodes):
+
+        episode_rewards = []
+
         # Create SimpleSpread instance
         env = simple_spread_v3.parallel_env(local_ratio=0.5)
         env.reset()
-        num_actions = 5
+
+        input_shape = 18
+        output_actions = 5
 
         agents = ["agent_0", "agent_1", "agent_2"]
 
@@ -95,18 +97,18 @@ class SimpleSpreadDQL:
         memories = {"agent_0": memory_0, "agent_1": memory_1, "agent_2": memory_2}
 
         # Create policy and target network.
-        policy_dqn_0 = DQN(input_shape=18, output_actions=num_actions)
-        policy_dqn_1 = DQN(input_shape=18, output_actions=num_actions)
-        policy_dqn_2 = DQN(input_shape=18, output_actions=num_actions)
+        policy_dqn_0 = DQN(input_shape=input_shape, output_actions=output_actions)
+        policy_dqn_1 = DQN(input_shape=input_shape, output_actions=output_actions)
+        policy_dqn_2 = DQN(input_shape=input_shape, output_actions=output_actions)
         policy_dqns = {
             "agent_0": policy_dqn_0,
             "agent_1": policy_dqn_1,
             "agent_2": policy_dqn_2,
         }
 
-        target_dqn_0 = DQN(input_shape=18, output_actions=num_actions)
-        target_dqn_1 = DQN(input_shape=18, output_actions=num_actions)
-        target_dqn_2 = DQN(input_shape=18, output_actions=num_actions)
+        target_dqn_0 = DQN(input_shape=input_shape, output_actions=output_actions)
+        target_dqn_1 = DQN(input_shape=input_shape, output_actions=output_actions)
+        target_dqn_2 = DQN(input_shape=input_shape, output_actions=output_actions)
         target_dqns = {
             "agent_0": target_dqn_0,
             "agent_1": target_dqn_1,
@@ -122,8 +124,6 @@ class SimpleSpreadDQL:
             self.optimizers[agent] = torch.optim.Adam(
                 policy_dqns[agent].parameters(), lr=self.learning_rate_a
             )
-
-        # List to keep track of rewards collected per episode. Initialize list to 0's.
 
         for episode in range(episodes):
             start = time.time()
@@ -179,7 +179,7 @@ class SimpleSpreadDQL:
                     )
 
                     # Decay epsilon
-                    epsilon = max(epsilon - 1 / (episodes*3), 0)
+                    epsilon = max(epsilon - 1 / (episodes * 3), 0)
 
                     # Copy policy network to target network after a certain number of steps
                     target_dqns[agent].load_state_dict(policy_dqns[agent].state_dict())
@@ -205,14 +205,27 @@ class SimpleSpreadDQL:
             )
             print()
 
+            episode_rewards.append(avg_rewards)
+
+            # Save policy every x episodes
+            if episode % SAVE_MODEL_EVERY == 0 and episode != 0:
+                for agent in agents:
+                    torch.save(
+                        policy_dqns[agent].state_dict(),
+                        str(episode) + "_" + agent + "_simple_spread_dql_cnn.pt",
+                    )
+
         # Close environment
         env.close()
 
         # Save policy
         for agent in agents:
             torch.save(
-                policy_dqns[agent].state_dict(), agent + "_simple_spread_dql_cnn.pt"
+                policy_dqns[agent].state_dict(),
+                "fin_" + agent + "_simple_spread_dql_cnn.pt",
             )
+
+        return episode_rewards
 
     # Optimize policy network
     def optimize(self, mini_batch, policy_dqn, target_dqn, agent):
@@ -220,7 +233,7 @@ class SimpleSpreadDQL:
         current_q_list = []
         target_q_list = []
 
-        for state, action, new_state, reward, terminated in mini_batch:
+        for state, action, new_state, reward, _ in mini_batch:
 
             # Calculate target q value
             with torch.no_grad():
@@ -238,7 +251,6 @@ class SimpleSpreadDQL:
             target_q = target_dqn(torch.from_numpy(state))
 
             # Adjust the specific action to the target that was just calculated.
-            # Target_q[batch][action], hardcode batch to 0 because there is only 1 batch.
             target_q[action] = target
             target_q_list.append(target_q)
 
@@ -252,46 +264,138 @@ class SimpleSpreadDQL:
         loss.backward()
         self.optimizers[agent].step()
 
-    # Run the SimpleSpread environment with the learned policy
-    def test(self, episodes):
-        # Create SimpleSpread instance
-        env = gym.make(
-            "FrozenLake-v1",
-            map_name="4x4",
-            render_mode="human",
+    def plot_results(self, episode_rewards, NUM_EPISODES):
+        avg_rewards_0 = []
+        avg_rewards_1 = []
+        avg_rewards_2 = []
+        rewards_0 = []
+        rewards_1 = []
+        rewards_2 = []
+
+        for m in episode_rewards:
+            for agent in m:
+                if agent == "agent_0":
+                    rewards_0.append(m[agent])
+
+                if agent == "agent_1":
+                    rewards_1.append(m[agent])
+
+                if agent == "agent_2":
+                    rewards_2.append(m[agent])
+
+        for i in range(0, NUM_EPISODES):
+            k = np.mean(rewards_0[i : i + 100])
+            k = np.round(k, 3)
+            avg_rewards_0.append(k)
+        for i in range(0, NUM_EPISODES):
+            k = np.mean(rewards_1[i : i + 100])
+            k = np.round(k, 3)
+            avg_rewards_1.append(k)
+        for i in range(0, NUM_EPISODES):
+            k = np.mean(rewards_2[i : i + 100])
+            k = np.round(k, 3)
+            avg_rewards_2.append(k)
+
+        no_episodes = []
+        for i in range(0, NUM_EPISODES):
+            no_episodes.append(i)
+        np.mean(rewards_0) + np.mean(rewards_1) + np.mean(rewards_2)
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(
+            no_episodes, rewards_0, color="red", linestyle="-", label="Total Reward0"
         )
-        num_states = env.observation_space.n
-        num_actions = env.action_space.n
 
-        # Load learned policy
-        policy_dqn = DQN(input_shape=3, out_actions=num_actions)
-        policy_dqn.load_state_dict(torch.load("frozen_lake_dql_cnn.pt"))
-        policy_dqn.eval()  # switch model to evaluation mode
+        plt.plot(
+            no_episodes,
+            avg_rewards_0,
+            color="midnightblue",
+            linestyle="--",
+            label="Episodes Reward Average0",
+        )
 
-        print("Policy (trained):")
-        self.print_dqn(policy_dqn)
+        # plt.grid(b=True, which="major", axis="y", linestyle="--")
+        plt.xlabel("Episode", fontsize=12)
+        plt.ylabel("Reward", fontsize=12)
+        plt.title("Total Reward per Testing Episode", fontsize=12)
+        plt.legend(loc="lower right", fontsize=12)
+        plt.show()
 
-        for i in range(episodes):
-            state = env.reset()[0]  # Initialize to state 0
-            terminated = False  # True when agent falls in hole or reached goal
-            truncated = False  # True when agent takes more than 200 actions
+        plt.plot(
+            no_episodes, rewards_1, color="blue", linestyle="-", label="Total Reward1"
+        )
+        plt.plot(
+            no_episodes,
+            avg_rewards_1,
+            color="black",
+            linestyle="--",
+            label="Episodes Reward Average1",
+        )
 
-            # Agent navigates map until it falls into a hole (terminated), reaches goal (terminated), or has taken 200 actions (truncated).
-            while not terminated and not truncated:
-                # Select best action
-                with torch.no_grad():
-                    action = policy_dqn(state).argmax().item()
+        # plt.grid(b=True, which="major", axis="y", linestyle="--")
+        plt.xlabel("Episode", fontsize=12)
+        plt.ylabel("Reward", fontsize=12)
+        plt.title("Total Reward per Testing Episode", fontsize=12)
+        plt.legend(loc="lower right", fontsize=12)
+        plt.show()
 
-                # Execute action
-                state, reward, terminated, truncated, _ = env.step(action)
+        plt.plot(
+            no_episodes, rewards_2, color="green", linestyle="-", label="Total Reward2"
+        )
+        plt.plot(
+            no_episodes,
+            avg_rewards_2,
+            color="pink",
+            linestyle="--",
+            label="Episodes Reward Average2",
+        )
 
-        env.close()
+        # plt.grid(b=True, which="major", axis="y", linestyle="--")
+        plt.xlabel("Episode", fontsize=12)
+        plt.ylabel("Reward", fontsize=12)
+        plt.title("Total Reward per Testing Episode", fontsize=12)
+        plt.legend(loc="lower right", fontsize=12)
+        plt.show()
+
+        total_avg_reward = []
+        for i in range(0, NUM_EPISODES):
+            k = np.mean(rewards_0[i] + rewards_1[i] + rewards_2[i])
+            k = np.round(k, 3)
+            total_avg_reward.append(k)
+        avg_total = []
+        for i in range(0, NUM_EPISODES):
+            k = np.mean(total_avg_reward[i : i + 100])
+            k = np.round(k, 3)
+            avg_total.append(k)
+        plt.plot(
+            no_episodes,
+            total_avg_reward,
+            color="blue",
+            linestyle="-",
+            label="MEAN REWARD OF 3AGENTS",
+        )
+        plt.plot(
+            no_episodes,
+            avg_total,
+            color="white",
+            linestyle="--",
+            label="Episodes Reward Average FOR 3 AGENTS",
+        )
+
+        # plt.grid(b=True, which="major", axis="y", linestyle="--")
+        plt.xlabel("Episode", fontsize=12)
+        plt.ylabel("Reward", fontsize=12)
+        plt.title("AVERAGE_REWARD", fontsize=12)
+        plt.legend(loc="lower right", fontsize=12)
+        plt.show()
 
 
 if __name__ == "__main__":
 
     NUM_STEPS = 25
+    NUM_EPISODES = 100_000
+    SAVE_MODEL_EVERY = 1_000
 
-    simple_spread = SimpleSpreadDQL()
-    simple_spread.train(10_000)
-    # frozen_lake.test(10)
+    dql = SimpleSpreadDQL()
+    episode_rewards = dql.train(NUM_EPISODES)
+    dql.plot_results(episode_rewards, NUM_EPISODES)

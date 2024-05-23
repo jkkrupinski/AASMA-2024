@@ -1,87 +1,150 @@
 from pettingzoo.mpe import simple_spread_v3
 import random
 import torch
-from torch import nn
+import argparse
+
+from train import DQN
 
 
-class DQN(nn.Module):
-    def __init__(self, input_shape, output_actions):
-        super().__init__()
-
-        self.model = self.create_model(input_shape, output_actions)
-
-    def create_model(self, input_shape, output_actions):
-        layers = [
-            nn.Linear(input_shape, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, output_actions),
-        ]
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
+class simplePolicy:
+    pass
 
 
-def load_models():
-    input_shape = 18
-    output_actions = 5
+class complexPolicy:
+    pass
 
-    model_0 = DQN(input_shape, output_actions)
-    model_0.load_state_dict(torch.load("models/agent_0.pt"))
 
-    model_1 = DQN(input_shape, output_actions)
-    model_1.load_state_dict(torch.load("models/agent_1.pt"))
+class DQLPolicy:
+    def __init__(self, agent):
+        self.agent = agent
+        self.load_models()
 
-    model_2 = DQN(input_shape, output_actions)
-    model_2.load_state_dict(torch.load("models/agent_2.pt"))
+    def load_models(self):
+        input_shape = 18
+        output_actions = 5
 
-    models = {"agent_0": model_0, "agent_1": model_1, "agent_2": model_2}
-    return models
+        self.model = DQN(input_shape, output_actions)
+        self.model.load_state_dict(torch.load("models/" + self.agent + ".pt"))
+
+    def choose_action(self, observations):
+        return self.model(torch.from_numpy(observations[self.agent])).argmax().item()
+
+
+def init_policies(policies):
+    agents = ["agent_0", "agent_1", "agent_2"]
+    agent_policies = {}
+
+    for i, agent in enumerate(agents):
+        if policies[i] == "rl":
+            agent_policies[agent] = DQLPolicy(agent)
+        elif policies[i] == "sp":
+            agent_policies[agent] = simplePolicy(agent)
+        elif policies[i] == "cp":
+            agent_policies[agent] = complexPolicy(agent)
+
+    return agent_policies
+
+
+def choose_seed(seeds, run_num):
+    if seeds:
+        return seeds[run_num]
+    else:
+        return random.randint(0, 100)
+
+
+def print_rewards(chosen_seed, average_rewards, rewards):
+    print(
+        "AVERAGE REWARDS [",
+        chosen_seed,
+        "]: agent_0:",
+        round(average_rewards["agent_0"], 2),
+        ", agent_1:",
+        round(average_rewards["agent_1"], 2),
+        ", agent_2:",
+        round(average_rewards["agent_2"], 2),
+    )
+    print(
+        "FINAL REWARDS [",
+        chosen_seed,
+        "]: agent_0:",
+        round(rewards["agent_0"], 2),
+        ", agent_1:",
+        round(rewards["agent_1"], 2),
+        ", agent_2:",
+        round(rewards["agent_2"], 2),
+    )
+    print()
 
 
 # seeds
 # 73, 69! 45  40 24 85 10!
 
 
-def test():
+def test(policies, num_of_runs, seeds=None, DEBUG=False):
+
+    if DEBUG:
+        print(f"Policies: {policies}")
+        print(f"Number of runs: {num_of_runs}")
+
+        if seeds:
+            print(f"Seeds: {seeds}")
+        else:
+            print("No seeds provided")
 
     NUM_CYCLES = 25
+    LOCAL_RATIO = 0.5
 
     env = simple_spread_v3.parallel_env(
-        render_mode="human", local_ratio=0.5, max_cycles=NUM_CYCLES
+        render_mode="human", local_ratio=LOCAL_RATIO, max_cycles=NUM_CYCLES
     )
 
-    seed = random.randint(0, 100)
-    print("Seed: ", seed)
-    observations, _ = env.reset(seed=seed)
+    agent_policies = init_policies(policies)
 
-    models = load_models()
-    avg_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
+    for run_num in range(num_of_runs):
 
-    while env.agents:
+        chosen_seed = choose_seed(seeds, run_num)
+        observations, _ = env.reset(seed=chosen_seed)
 
-        actions = {
-            agent: models[agent](torch.from_numpy(observations[agent])).argmax().item()
-            for agent in env.agents
-        }
-        observations, rewards, _, _, _ = env.step(actions)
+        average_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
+        actions = {}
 
-        for agent in env.agents:
-            avg_rewards[agent] += rewards[agent] / NUM_CYCLES
+        while env.agents:
 
-    print(
-        "AVG REWARDS: agent_0:",
-        round(avg_rewards["agent_0"], 2),
-        ", agent_1:",
-        round(avg_rewards["agent_1"], 2),
-        ", agent_2:",
-        round(avg_rewards["agent_2"], 2),
-    )
+            for agent in env.agents:
+                actions[agent] = agent_policies[agent].choose_action(observations)
+
+            observations, rewards, _, _, _ = env.step(actions)
+
+            for agent in env.agents:
+                average_rewards[agent] += rewards[agent] / NUM_CYCLES
+
+        print_rewards(chosen_seed, average_rewards, rewards)
 
     env.close()
 
 
 if __name__ == "__main__":
-    test()
+
+    parser = argparse.ArgumentParser(
+        description="Test different policies for agents for certain number of runs with choosing the seed values."
+    )
+
+    parser.add_argument(
+        "policies",
+        nargs=3,
+        choices=["rl", "sp", "cp"],
+        help="Policies for agent_0, agent_1, agent_2. Possible options are: 'rl' - reinforement learning, 'sp' - simple policy, 'cp' - complex policy.",
+    )
+    parser.add_argument(
+        "num_of_runs", type=int, help="Number of runs to test policies."
+    )
+    parser.add_argument(
+        "seeds", type=int, nargs="*", help="Optional seed values for each of the runs."
+    )
+
+    args = parser.parse_args()
+
+    if args.seeds and len(args.seeds) != args.num_of_runs:
+        parser.error("The number of seeds provided must match number of runs.")
+
+    test(args.policies, args.num_of_runs, args.seeds)

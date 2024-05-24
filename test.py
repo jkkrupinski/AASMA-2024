@@ -2,16 +2,145 @@ from pettingzoo.mpe import simple_spread_v3
 import random
 import torch
 import argparse
+import numpy as np
+from scipy.spatial.distance import cdist
 
 from train import DQN
 
 
+# Actions
+NOTHING = 0
+LEFT = 1
+RIGHT = 2
+DOWN = 3
+UP = 4
+
+
 class simplePolicy:
-    pass
+    def __init__(self, agent):
+        self.agent = agent
+        self.epsilon = 0.1
+
+    def distance(self, a, b):
+        return np.linalg.norm(np.array(a) - np.array(b))
+
+    def choose_target(self, observation):
+        self.position = observation[2:4]
+
+        landmark_rel_positions = observation[4:10]
+        landmarks = np.array(
+            [
+                landmark_rel_positions[0:2],
+                landmark_rel_positions[2:4],
+                landmark_rel_positions[4:6],
+            ]
+        )
+
+        distances = []
+        for landmark in landmarks:
+            distances.append(self.distance(landmark, self.position))
+
+        self.target_pos = landmarks[distances.index(min(distances))]
+
+    def choose_action(self, observations):
+
+        observation = observations[self.agent]
+        self.choose_target(observation)
+
+        if (
+            abs(self.target_pos[0]) < self.epsilon
+            and abs(self.target_pos[1]) < self.epsilon
+        ):
+            return NOTHING
+
+        if abs(self.target_pos[0]) > abs(self.target_pos[1]):
+            if self.target_pos[0] > self.epsilon:
+                return RIGHT
+            else:
+                return LEFT
+
+        else:
+            if self.target_pos[1] > self.epsilon:
+                return UP
+            else:
+                return DOWN
 
 
 class complexPolicy:
-    pass
+    def __init__(self, agent):
+        self.agent = agent
+        self.epsilon = 0.2
+
+    def choose_action(self, observations):
+
+        agents_targets = self.choose_targets(observations)
+
+        target = agents_targets[self.agent]
+        observation = observations[self.agent]
+        position = observation[2:4]
+
+        direction = target - position
+
+        if abs(direction[0]) < self.epsilon and abs(direction[1]) < self.epsilon:
+            return NOTHING
+
+        if abs(direction[0]) > abs(direction[1]):
+            if direction[0] > 0:
+                return RIGHT
+            else:
+                return LEFT
+        else:
+            if direction[1] > 0:
+                return UP
+            else:
+                return DOWN
+
+    def choose_targets(self, observations):
+        agents_targets = {}
+
+        obs = observations["agent_0"]
+
+        self_pos = obs[2:4]
+        agent_1_position = obs[10:12] + self_pos
+        agent_2_position = obs[12:14] + self_pos
+
+        landmark_rel_positions = obs[4:10]
+        landmarks = np.array(
+            [
+                landmark_rel_positions[0:2] + self_pos,
+                landmark_rel_positions[2:4] + self_pos,
+                landmark_rel_positions[4:6] + self_pos,
+            ]
+        )
+
+        agents = np.array([self_pos, agent_1_position, agent_2_position])
+        landmarks = np.array([landmarks[i] for i in range(3)])
+
+        distances = cdist(agents, landmarks)
+
+        pairs = []
+        used_agents = np.zeros(len(agents), dtype=bool)
+
+        for landmark_index in range(len(landmarks)):
+            min_dist = np.inf
+            min_agent_index = None
+
+            for agent_index in range(len(agents)):
+                if used_agents[agent_index]:
+                    continue
+                if distances[agent_index, landmark_index] < min_dist:
+                    min_dist = distances[agent_index, landmark_index]
+                    min_agent_index = agent_index
+
+            if min_agent_index is not None:
+                pairs.append((min_agent_index, landmark_index))
+                used_agents[min_agent_index] = True
+
+        for agent_index, landmark_index in pairs:
+            agent = "agent_" + str(agent_index)
+            agents_targets[agent] = landmarks[landmark_index]
+
+        return agents_targets
 
 
 class DQLPolicy:
@@ -49,7 +178,7 @@ def choose_seed(seeds, run_num):
     if seeds:
         return seeds[run_num]
     else:
-        return random.randint(0, 100)
+        return random.randint(0, 1000)
 
 
 def print_rewards(chosen_seed, average_rewards, rewards):

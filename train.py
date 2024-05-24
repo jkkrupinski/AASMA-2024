@@ -51,111 +51,145 @@ class ReplayMemory:
 
 
 class SimpleSpreadDQL:
-    # Hyperparameters (adjustable)
-    learning_rate_a = 0.001  # learning rate (alpha)
-    discount_factor_g = 0.9  # discount rate (gamma)
-    network_sync_rate = 10  # number of steps the agent takes before syncing the policy and target network
-    replay_memory_size = 1000  # size of replay memory
-    mini_batch_size = 32  # size of the training data set sampled from the replay memory
 
-    # Neural Network
-    loss_fn_0 = nn.MSELoss()
-    loss_fn_1 = nn.MSELoss()
-    loss_fn_2 = nn.MSELoss()
-    loss_fns = {"agent_0": loss_fn_0, "agent_1": loss_fn_1, "agent_2": loss_fn_2}
+    def __init__(self):
+        self._init_parameters()
+        self._init_loss_functions()
+        self._init_optimizers()
 
-    optimizer_0 = None
-    optimizer_1 = None
-    optimizer_2 = None
-    optimizers = {
-        "agent_0": optimizer_0,
-        "agent_1": optimizer_1,
-        "agent_2": optimizer_2,
-    }
+    def _init_parameters(self):
+        # Hyperparameters (adjustable)
+        self.learning_rate = 0.001  # learning rate (alpha)
+        self.discount_factor_g = 0.9  # discount rate (gamma)
+        self.network_sync_rate = 10  # number of steps the agent takes before syncing the policy and target network
+        self.replay_memory_size = 1000  # size of replay memory
+        self.mini_batch_size = (
+            32  # size of the training data set sampled from the replay memory
+        )
 
-    ACTIONS = ["N", "L", "R", "D", "U"]
+    def _init_loss_functions(self):
+        loss_fn_0 = nn.MSELoss()
+        loss_fn_1 = nn.MSELoss()
+        loss_fn_2 = nn.MSELoss()
 
-    # Train the SimpleSpread environment
-    def train(self, episodes):
+        self.loss_fns = {
+            "agent_0": loss_fn_0,
+            "agent_1": loss_fn_1,
+            "agent_2": loss_fn_2,
+        }
 
-        episode_rewards = []
+    def _init_optimizers(self):
+        optimizer_0 = None
+        optimizer_1 = None
+        optimizer_2 = None
+        self.optimizers = {
+            "agent_0": optimizer_0,
+            "agent_1": optimizer_1,
+            "agent_2": optimizer_2,
+        }
 
-        # Create SimpleSpread instance
-        env = simple_spread_v3.parallel_env(local_ratio=0.5)
-        env.reset()
-
-        input_shape = 18
-        output_actions = 5
-
-        agents = ["agent_0", "agent_1", "agent_2"]
-
-        epsilon = 1  # 1 = 100% random actions
-
+    def _init_memories(self):
         memory_0 = ReplayMemory(self.replay_memory_size)
         memory_1 = ReplayMemory(self.replay_memory_size)
         memory_2 = ReplayMemory(self.replay_memory_size)
-        memories = {"agent_0": memory_0, "agent_1": memory_1, "agent_2": memory_2}
 
-        # Create policy and target network.
-        policy_dqn_0 = DQN(input_shape=input_shape, output_actions=output_actions)
-        policy_dqn_1 = DQN(input_shape=input_shape, output_actions=output_actions)
-        policy_dqn_2 = DQN(input_shape=input_shape, output_actions=output_actions)
-        policy_dqns = {
-            "agent_0": policy_dqn_0,
-            "agent_1": policy_dqn_1,
-            "agent_2": policy_dqn_2,
+        self.memories = {"agent_0": memory_0, "agent_1": memory_1, "agent_2": memory_2}
+
+    def _init_dqns(self):
+        input_shape = 18
+        output_actions = 5
+
+        dqn_0 = DQN(input_shape=input_shape, output_actions=output_actions)
+        dqn_1 = DQN(input_shape=input_shape, output_actions=output_actions)
+        dqn_2 = DQN(input_shape=input_shape, output_actions=output_actions)
+
+        dqns = {
+            "agent_0": dqn_0,
+            "agent_1": dqn_1,
+            "agent_2": dqn_2,
         }
 
-        target_dqn_0 = DQN(input_shape=input_shape, output_actions=output_actions)
-        target_dqn_1 = DQN(input_shape=input_shape, output_actions=output_actions)
-        target_dqn_2 = DQN(input_shape=input_shape, output_actions=output_actions)
-        target_dqns = {
-            "agent_0": target_dqn_0,
-            "agent_1": target_dqn_1,
-            "agent_2": target_dqn_2,
-        }
+        return dqns
+
+    def copy_dqn_weights(self, agent):
+        self.target_dqns[agent].load_state_dict(self.policy_dqns[agent].state_dict())
+
+    def set_dqn_optimizer(self, agent):
+        self.optimizers[agent] = torch.optim.Adam(
+            self.policy_dqns[agent].parameters(), lr=self.learning_rate
+        )
+
+    def choose_action(self, agent, states):
+        if random.random() < self.epsilon:
+            action = np.random.randint(0, self.env.action_spaces[agent].n)
+
+        else:
+            with torch.no_grad():
+                action = (
+                    self.policy_dqns[agent](torch.from_numpy(states[agent]))
+                    .argmax()
+                    .item()
+                )
+
+        return action
+
+    def decay_epsilon(self, episodes):
+        num_of_agents = 3  # decay is called for each agent, thats why we divide by (episodes * num_of_agents)
+        self.epsilon = max(self.epsilon - 1 / (episodes * num_of_agents), 0)
+
+    def save_policy(self, agent, prefix):
+        torch.save(
+            self.policy_dqns[agent].state_dict(),
+            prefix + agent + ".pt",
+        )
+
+    # Train on the SimpleSpread environment
+    def train(self, episodes):
+
+        # Create SimpleSpread instance
+        self.env = simple_spread_v3.parallel_env(local_ratio=0.5)
+        agents = ["agent_0", "agent_1", "agent_2"]
+        self.env.reset()
+
+        self._init_memories()
+
+        # Create policy and target networks.
+        self.policy_dqns = self._init_dqns()
+        self.target_dqns = self._init_dqns()
 
         # Make the target and policy networks the same (copy weights/biases from one network to the other)
         for agent in agents:
-            target_dqns[agent].load_state_dict(policy_dqns[agent].state_dict())
+            self.copy_dqn_weights(agent)
 
-        # Policy network optimizer. "Adam" optimizer can be swapped to something else.
+        # Policy network optimizers.
         for agent in agents:
-            self.optimizers[agent] = torch.optim.Adam(
-                policy_dqns[agent].parameters(), lr=self.learning_rate_a
-            )
+            self.set_dqn_optimizer(agent)
+
+        episode_rewards = []
+        self.epsilon = 1
 
         for episode in range(episodes):
             start = time.time()
-            states = env.reset()[0]  # Initialize to state 0
+
+            states = self.env.reset()[0]
+
             actions = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
             avg_rewards = {"agent_0": 0, "agent_1": 0, "agent_2": 0}
 
             for step in range(NUM_STEPS):
 
                 for agent in agents:
+                    actions[agent] = self.choose_action(agent, states)
 
-                    if random.random() < epsilon:
-                        action = np.random.randint(0, env.action_spaces[agent].n)
-
-                    else:
-                        with torch.no_grad():
-                            action = (
-                                policy_dqns[agent](torch.from_numpy(states[agent]))
-                                .argmax()
-                                .item()
-                            )
-                            actions[agent] = action
-
-                # Execute action
-                new_states, rewards, terminations, _, _ = env.step(actions)
+                # Execute actions
+                new_states, rewards, terminations, _, _ = self.env.step(actions)
 
                 for agent in agents:
                     # Save average rewards per episode
                     avg_rewards[agent] += rewards[agent] / NUM_STEPS
 
                     # Save experience into memory
-                    memories[agent].append(
+                    self.memories[agent].append(
                         (
                             states[agent],
                             actions[agent],
@@ -171,59 +205,38 @@ class SimpleSpreadDQL:
             # Check if enough experience has been collected
             for agent in agents:
 
-                memory = memories[agent]
+                memory = self.memories[agent]
                 if memory.__len__() > self.mini_batch_size:
                     mini_batch = memory.sample(self.mini_batch_size)
                     self.optimize(
-                        mini_batch, policy_dqns[agent], target_dqns[agent], agent
+                        mini_batch,
+                        self.policy_dqns[agent],
+                        self.target_dqns[agent],
+                        agent,
                     )
 
-                    # Decay epsilon
-                    epsilon = max(epsilon - 1 / (episodes * 3), 0)
+                    self.decay_epsilon(episodes)
 
                     # Copy policy network to target network after a certain number of steps
-                    target_dqns[agent].load_state_dict(policy_dqns[agent].state_dict())
+                    self.copy_dqn_weights(agent)
 
             end = time.time()
-
-            print(
-                "EPISODE",
-                episode,
-                " Epsilon = ",
-                round(epsilon, 2),
-                "TIME = ",
-                round(end - start, 2),
-                "s",
-            )
-            print(
-                "AVG REWARDS: agent_0:",
-                round(avg_rewards["agent_0"], 2),
-                ", agent_1:",
-                round(avg_rewards["agent_1"], 2),
-                ", agent_2:",
-                round(avg_rewards["agent_2"], 2),
-            )
-            print()
-
+            self.print_rewards(avg_rewards, start, end, episode)
             episode_rewards.append(avg_rewards)
 
-            # Save policy every x episodes
+            # Save policy every X episodes
             if episode % SAVE_MODEL_EVERY == 0 and episode != 0:
                 for agent in agents:
-                    torch.save(
-                        policy_dqns[agent].state_dict(),
-                        str(episode) + "_" + agent + "_simple_spread_dql_cnn.pt",
-                    )
+                    prefix = str(episode) + "_"
+                    self.save_policy(agent, prefix)
 
         # Close environment
-        env.close()
+        self.env.close()
 
         # Save policy
         for agent in agents:
-            torch.save(
-                policy_dqns[agent].state_dict(),
-                "fin_" + agent + "_simple_spread_dql_cnn.pt",
-            )
+            prefix = "fin_"
+            self.save_policy(agent, prefix)
 
         return episode_rewards
 
@@ -389,12 +402,32 @@ class SimpleSpreadDQL:
         plt.legend(loc="lower right", fontsize=12)
         plt.show()
 
+    def print_rewards(self, avg_rewards, start, end, episode):
+        print(
+            "EPISODE",
+            episode,
+            " Epsilon = ",
+            round(self.epsilon, 2),
+            "TIME = ",
+            round(end - start, 2),
+            "s",
+        )
+        print(
+            "AVG REWARDS: agent_0:",
+            round(avg_rewards["agent_0"], 2),
+            ", agent_1:",
+            round(avg_rewards["agent_1"], 2),
+            ", agent_2:",
+            round(avg_rewards["agent_2"], 2),
+        )
+        print()
+
 
 if __name__ == "__main__":
 
     NUM_STEPS = 25
-    NUM_EPISODES = 100_000
-    SAVE_MODEL_EVERY = 1_000
+    NUM_EPISODES = 100
+    SAVE_MODEL_EVERY = 100
 
     dql = SimpleSpreadDQL()
     episode_rewards = dql.train(NUM_EPISODES)

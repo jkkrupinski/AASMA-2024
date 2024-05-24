@@ -49,7 +49,7 @@ Repository contains pre-trained models to see possible results named `agent_X.pt
     <img src="imgs/result_cp.gif" alt="mpe" width="400"/>
 
 - ### Independent DQL
-    Agents were trained using Deep Q-Learning (DQL) with 3 sets of convolutional neural networks (CNN), one set for each agent. 
+    Agents were trained using Deep Q-Learning (DQL) with 3 sets of Deep Q-Network (DQN), one set for each agent. 
 
     <img src="imgs/result_rl.gif" alt="mpe" width="400"/>
 
